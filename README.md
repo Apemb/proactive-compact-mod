@@ -95,3 +95,27 @@ tsc -p .                   # once the mod has loaded and Claude Code has written
 - A `compactFloor` above `requestThreshold` makes the compact request pointless, since the tool would refuse. The mod
   does not flag it yet.
 - The `⚠` before the status in the status bar is drawn by Claude Code; the API offers no way to change it.
+
+## Status
+
+Qualified in a real interactive session on 2026-10-15 (Claude Code 2.1.301), with test thresholds of 20% (compact
+request), 30% (reminder) and 15% (floor):
+
+- the compact request arrived, then the reminder, once each;
+- the agent called `compact_session` at 31% (about 306k tokens); the compaction ran when the turn ended;
+- right after, `context_usage` reported 7% (about 65k tokens), `Last message sent: none` and
+  `Compaction scheduled: no`: the cycle was rearmed.
+
+The mod is now installed for every session through `CLAUDE_CODE_PLUGIN_DIRS`, with the default settings.
+
+Not published yet: the repository has no remote.
+
+## Next steps
+
+1. **Warn when `compactFloor` is above `requestThreshold`**, in `/proactive-compact status` and in `context_usage`:
+   the compact request is then pointless, since `compact_session` would refuse.
+2. **Subagents (v2)**: let a subagent measure its own context and get the compact request and the reminder, so that a
+   long-running agent can keep within a context budget (for instance 450k tokens targeted, 600k at most).
+3. **Open question**: during the trial, the compact request once arrived at 29% instead of 20%, after several hot
+   reloads of the mod. Suspected cause, not established: a reload at the end of a turn misses that turn's
+   `turn.complete`. Worth reproducing before relying on hot reload.
