@@ -1,230 +1,235 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 
-import type { CompactageEnAttente } from '../types'
+import type { PendingCompact } from '../types'
 import {
-  chargerReglages,
-  instructionsDuResume,
-  messageDuNiveau,
-  NOM,
-  type Reglages,
+  messageForLevel,
+  NAME,
+  resolveSettings,
+  summaryInstructions,
+  type Settings,
   type Source,
-} from './reglages'
+} from './settings'
 
-const NIVEAU = { plugin: 'proactive-compact-mod', key: 'niveau' } as const
-const EN_ATTENTE = { plugin: 'proactive-compact-mod', key: 'enAttente' } as const
+const LEVEL = { plugin: 'proactive-compact-mod', key: 'level' } as const
+const PENDING = { plugin: 'proactive-compact-mod', key: 'pending' } as const
 
-const OUTIL_COMPACTER = `mcp__${NOM}__compacter_session`
+const COMPACT_TOOL = `mcp__${NAME}__compact_session`
 
-// Un compactage échoue tant qu'un tour tourne : on retente jusqu'à ce que la
-// session soit au repos, environ deux minutes au plus.
-const ESSAIS_MAX = 40
-const ATTENTE_ENTRE_ESSAIS_MS = 3000
+// Compacting fails while a turn runs: retry until the session is idle, for
+// about two minutes at most.
+const MAX_ATTEMPTS = 40
+const RETRY_DELAY_MS = 3000
+
+const LEVEL_NAMES = ['none', 'compact request', 'reminder'] as const
+const NUMERIC: readonly (keyof Settings)[] = ['enabled', 'requestThreshold', 'reminderThreshold', 'compactFloor']
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await Promise.all([
       $.tool.register({
-        name: 'contexte_session',
+        name: 'context_usage',
         description:
-          "Donne le remplissage du contexte de la session principale : tokens, fenêtre, pourcentage, seuils de demande et de relance, plancher de compactage. Avec `detail: true`, ajoute la ventilation estimée par catégorie et le seuil de compactage automatique.",
+          'Reports how full the main session context is: tokens, window, percentage, compact request and reminder thresholds, compact floor. With `detail: true`, adds the estimated breakdown by category and the auto-compact threshold.',
         inputSchema: {
           type: 'object',
-          properties: { detail: { type: 'boolean', description: 'Ajoute la ventilation par catégorie.' } },
+          properties: { detail: { type: 'boolean', description: 'Adds the breakdown by category.' } },
         },
         isDeferred: false,
       }),
       $.tool.register({
-        name: 'compacter_session',
+        name: 'compact_session',
         description:
-          "Programme le compactage de la session principale, exécuté dès la fin du tour en cours. À appeler une fois les mémoires et documents de suivi à jour, à un moment calme. Refusé sous le plancher réglé. Après l'appel, termine ton tour sans autre outil.",
+          'Schedules a compaction of the main session, run as soon as the current turn ends. Call it once memories and tracking documents are up to date, at a quiet moment. Refused below the configured floor. After calling it, end your turn without any other tool call.',
         inputSchema: {
           type: 'object',
           properties: {
             instructions: {
               type: 'string',
-              description: 'Ce que le résumé doit garder ou souligner, comme après /compact.',
+              description: 'What the summary must keep or stress, as after /compact.',
             },
           },
         },
         isDeferred: false,
       }),
       $.command.register({
-        name: 'compactage',
-        description: 'Demandes de compactage : état, on, off, réglages',
-        argumentHint: '[statut|on|off|reglages]',
+        name: 'proactive-compact',
+        description: 'Proactive compaction: status, on, off, settings',
+        argumentHint: '[status|on|off|settings]',
       }),
     ])
     return next(e)
   })
 
-  on('tool.call', { tool: 'mcp__proactive-compact-mod__contexte_session' }, async ($, e) => {
-    if (e.agentId !== undefined) return { deny: 'Réservé à la session principale.' }
+  on('tool.call', { tool: 'mcp__proactive-compact-mod__context_usage' }, async ($, e) => {
+    if (e.agentId !== undefined) return { deny: 'Main session only.' }
     const detail = (e as { detail?: unknown }).detail === true
-    return { result: await decrireContexte($, options, detail) }
+    return { result: await describeContext($, options, detail) }
   })
 
-  on('tool.call', { tool: 'mcp__proactive-compact-mod__compacter_session' }, async ($, e) => {
-    if (e.agentId !== undefined) return { deny: 'Réservé à la session principale.' }
-    const { valeurs } = await chargerReglages($, options)
-    const pourcentage = (await $.session.usage()).context.percent ?? 0
-    if (pourcentage < valeurs.plancher) {
+  on('tool.call', { tool: 'mcp__proactive-compact-mod__compact_session' }, async ($, e) => {
+    if (e.agentId !== undefined) return { deny: 'Main session only.' }
+    const { values } = await resolveSettings($, options)
+    const percent = (await $.session.usage()).context.percent ?? 0
+    if (percent < values.compactFloor) {
       return {
-        deny: `Compactage refusé : le contexte est à ${pourcentage} %, sous le plancher de ${valeurs.plancher} %.`,
+        deny: `Compaction refused: the context is at ${percent}%, below the ${values.compactFloor}% floor.`,
       }
     }
-    const brut = (e as { instructions?: unknown }).instructions
-    const instructions = typeof brut === 'string' && brut.trim() !== '' ? brut : null
-    await $.state.set(EN_ATTENTE, { instructions })
-    $.ui.status('compactage programmé')
+    const raw = (e as { instructions?: unknown }).instructions
+    const instructions = typeof raw === 'string' && raw.trim() !== '' ? raw : null
+    await $.state.set(PENDING, { instructions })
+    $.ui.status('compaction scheduled')
     return {
       result:
-        'Compactage programmé : il partira dès la fin de ce tour. Termine ton tour maintenant, en une phrase, sans autre appel d’outil.',
+        'Compaction scheduled: it will run as soon as this turn ends. End your turn now, in one sentence, without any other tool call.',
     }
   })
 
   on('turn.complete', async ($, e, next) => {
-    const reponse = await next(e)
-    if (e.agentId !== undefined) return reponse
+    const answer = await next(e)
+    if (e.agentId !== undefined) return answer
 
-    const { value: enAttente = null } = await $.state.get(EN_ATTENTE)
-    if (enAttente !== null) {
+    const { value: pending = null } = await $.state.get(PENDING)
+    if (pending !== null) {
       if (e.reason === 'answer') {
-        $.clock.after(300, () => void compacter($, options, enAttente, 0))
+        $.clock.after(300, () => void compact($, options, pending, 0))
       } else {
-        await $.state.set(EN_ATTENTE, null)
+        await $.state.set(PENDING, null)
         $.ui.status(undefined)
-        $.ui.toast('Compactage annulé : le tour a été interrompu.')
+        $.ui.toast('Compaction cancelled: the turn was interrupted.')
       }
-      return reponse
+      return answer
     }
 
-    if (e.reason === 'answer') await envoyerSiBesoin($, options)
-    return reponse
+    if (e.reason === 'answer') await sendIfDue($, options)
+    return answer
   })
 
-  // Un compactage venu d'ailleurs (/compact, l'automatique) réarme aussi la demande et la relance.
+  // A compaction from elsewhere (/compact, auto-compact) also rearms the messages.
   on('session.compact', async ($, e, next) => {
-    const resultat = await next(e)
-    if (e.agentId === undefined && e.trigger !== 'precompute' && !('skip' in resultat && resultat.skip)) {
-      await reinitialiser($)
+    const result = await next(e)
+    if (e.agentId === undefined && e.trigger !== 'precompute' && !('skip' in result && result.skip)) {
+      await reset($)
     }
-    return resultat
+    return result
   })
 
-  on('command.run', { command: 'compactage' }, async ($, e) => {
-    const verbe = e.args.trim().toLowerCase()
-    if (verbe === 'on' || verbe === 'off') return { text: await basculer($, options, verbe === 'on') }
-    if (verbe === 'reglages' || verbe === 'réglages') return { text: AIDE_REGLAGES }
-    if (verbe === '' || verbe === 'statut') return { text: await decrireContexte($, options, false) }
-    return { text: `Argument inconnu : « ${verbe} ». Attendu : statut, on, off ou reglages.` }
+  on('command.run', { command: 'proactive-compact' }, async ($, e) => {
+    const verb = e.args.trim().toLowerCase()
+    if (verb === 'on' || verb === 'off') return { text: await toggle($, options, verb === 'on') }
+    if (verb === 'settings') return { text: SETTINGS_HELP }
+    if (verb === '' || verb === 'status') return { text: await describeContext($, options, false) }
+    return { text: `Unknown argument "${verb}". Expected: status, on, off or settings.` }
   })
 }
 
-async function envoyerSiBesoin($: EngineInterface, options: PluginOptions): Promise<void> {
-  const { valeurs } = await chargerReglages($, options)
-  const pourcentage = (await $.session.usage()).context.percent ?? 0
-  const { value: niveau = 0 } = await $.state.get(NIVEAU)
+async function sendIfDue($: EngineInterface, options: PluginOptions): Promise<void> {
+  const { values } = await resolveSettings($, options)
+  const percent = (await $.session.usage()).context.percent ?? 0
+  const { value: level = 0 } = await $.state.get(LEVEL)
 
-  if (pourcentage < valeurs.seuilDemande) {
-    if (niveau > 0) await reinitialiser($)
+  if (percent < values.requestThreshold) {
+    if (level > 0) await reset($)
     return
   }
-  if (!valeurs.actif) return
+  if (!values.enabled) return
 
-  const cible = pourcentage >= valeurs.seuilRelance && niveau < 2 ? 2 : niveau < 1 ? 1 : 0
-  if (cible === 0) return
+  const target = percent >= values.reminderThreshold && level < 2 ? 2 : level < 1 ? 1 : 0
+  if (target === 0) return
 
-  await $.state.set(NIVEAU, cible)
-  $.ui.status(`${cible === 2 ? 'relance envoyée' : 'demande de compactage envoyée'} à ${pourcentage} %`)
-  const text = messageDuNiveau(valeurs, cible, pourcentage, OUTIL_COMPACTER)
-  // Le prompt démarre un tour à lui dès que la session est au repos.
+  await $.state.set(LEVEL, target)
+  $.ui.status(`${target === 2 ? 'reminder sent' : 'compact requested'} at ${percent}%`)
+  const text = messageForLevel(values, target, percent, COMPACT_TOOL)
+  // The prompt starts a turn of its own as soon as the session is idle.
   $.clock.after(0, () => void $.prompt.submit({ text }))
 }
 
-async function compacter(
+async function compact(
   $: EngineInterface,
   options: PluginOptions,
-  enAttente: CompactageEnAttente,
-  essai: number,
+  pending: PendingCompact,
+  attempt: number,
 ): Promise<void> {
-  const { valeurs } = await chargerReglages($, options)
+  const { values } = await resolveSettings($, options)
   try {
-    const resultat = await $.session.compact({
-      instructions: instructionsDuResume(valeurs, enAttente.instructions),
+    const result = await $.session.compact({
+      instructions: summaryInstructions(values, pending.instructions),
     })
-    if ('skip' in resultat && resultat.skip) {
-      await $.state.set(EN_ATTENTE, null)
+    if ('skip' in result && result.skip) {
+      await $.state.set(PENDING, null)
       $.ui.status(undefined)
-      $.ui.toast(`Compactage refusé : ${resultat.skip}`)
+      $.ui.toast(`Compaction refused: ${result.skip}`)
       return
     }
-    await reinitialiser($)
+    await reset($)
   } catch {
-    if (essai + 1 < ESSAIS_MAX) {
-      $.clock.after(ATTENTE_ENTRE_ESSAIS_MS, () => void compacter($, options, enAttente, essai + 1))
+    if (attempt + 1 < MAX_ATTEMPTS) {
+      $.clock.after(RETRY_DELAY_MS, () => void compact($, options, pending, attempt + 1))
       return
     }
-    await $.state.set(EN_ATTENTE, null)
+    await $.state.set(PENDING, null)
     $.ui.status(undefined)
-    $.ui.toast('Compactage abandonné : la session n’a pas été au repos assez longtemps.')
+    $.ui.toast('Compaction abandoned: the session was not idle long enough.')
   }
 }
 
-async function reinitialiser($: EngineInterface): Promise<void> {
-  await Promise.all([$.state.set(NIVEAU, 0), $.state.set(EN_ATTENTE, null)])
+async function reset($: EngineInterface): Promise<void> {
+  await Promise.all([$.state.set(LEVEL, 0), $.state.set(PENDING, null)])
   $.ui.status(undefined)
 }
 
-async function basculer($: EngineInterface, options: PluginOptions, actif: boolean): Promise<string> {
-  const ligne = (await $.config.list()).find(r => r.key === `${NOM}.actif` || r.key.startsWith(`${NOM}@`) && r.key.endsWith('.actif'))
-  if (ligne === undefined) return 'Réglage « actif » introuvable dans /config.'
-  const { deny } = await $.config.set({ key: ligne.key, value: actif })
-  if (deny !== undefined) return `Refusé : ${deny}`
-  const { sources } = await chargerReglages($, options)
-  const avertissement =
-    sources.actif === 'projet' || sources.actif === 'local'
-      ? ` Attention : les réglages ${sources.actif === 'projet' ? 'du projet' : 'locaux'} fixent « actif » et l’emportent ici.`
+async function toggle($: EngineInterface, options: PluginOptions, enabled: boolean): Promise<string> {
+  const row = (await $.config.list()).find(
+    r => r.key === `${NAME}.enabled` || (r.key.startsWith(`${NAME}@`) && r.key.endsWith('.enabled')),
+  )
+  if (row === undefined) return 'The "enabled" setting was not found in /config.'
+  const { deny } = await $.config.set({ key: row.key, value: enabled })
+  if (deny !== undefined) return `Refused: ${deny}`
+  const { sources } = await resolveSettings($, options)
+  const warning =
+    sources.enabled === 'project' || sources.enabled === 'local'
+      ? ` Note: the ${sources.enabled} settings set "enabled" and take precedence here.`
       : ''
-  return `Demandes de compactage ${actif ? 'activées' : 'désactivées'} pour tous les projets.${avertissement}`
+  return `Compact requests ${enabled ? 'enabled' : 'disabled'} for all projects.${warning}`
 }
 
-async function decrireContexte($: EngineInterface, options: PluginOptions, detail: boolean): Promise<string> {
-  const [{ valeurs, sources }, usage, niveau, enAttente] = await Promise.all([
-    chargerReglages($, options),
+async function describeContext($: EngineInterface, options: PluginOptions, detail: boolean): Promise<string> {
+  const [{ values, sources }, usage, level, pending] = await Promise.all([
+    resolveSettings($, options),
     $.session.usage(detail ? { breakdown: 'summary' } : undefined),
-    $.state.get(NIVEAU),
-    $.state.get(EN_ATTENTE),
+    $.state.get(LEVEL),
+    $.state.get(PENDING),
   ])
   const { tokens, window, percent } = usage.context
-  const s = (cle: keyof Reglages) => (sources[cle] === 'défaut' ? '' : ` (${sources[cle]})`)
-  const lignes = [
-    `Contexte : ${tokens === undefined ? 'pas encore mesuré' : `${nombre(tokens)} tokens sur ${nombre(window)} (${percent ?? 0} %)`}.`,
-    `Demandes : ${valeurs.actif ? 'actives' : 'désactivées'}${s('actif')} ; demande à ${valeurs.seuilDemande} %${s('seuilDemande')}, relance à ${valeurs.seuilRelance} %${s('seuilRelance')}, plancher ${valeurs.plancher} %${s('plancher')}.`,
-    `Dernier message envoyé : ${['aucun', 'demande', 'relance'][niveau.value ?? 0] ?? 'aucun'}. Compactage programmé : ${enAttente.value ? 'oui' : 'non'}.`,
+  const from = (key: keyof Settings) => (sources[key] === 'default' ? '' : ` (${sources[key]})`)
+  const lines = [
+    `Context: ${tokens === undefined ? 'not measured yet' : `${count(tokens)} tokens of ${count(window)} (${percent ?? 0}%)`}.`,
+    `Messages: ${values.enabled ? 'enabled' : 'disabled'}${from('enabled')}; compact request at ${values.requestThreshold}%${from('requestThreshold')}, reminder at ${values.reminderThreshold}%${from('reminderThreshold')}, floor ${values.compactFloor}%${from('compactFloor')}.`,
+    `Last message sent: ${LEVEL_NAMES[level.value ?? 0] ?? 'none'}. Compaction scheduled: ${pending.value ? 'yes' : 'no'}.`,
   ]
-  const surcharges = (Object.entries(sources) as [keyof Reglages, Source][])
-    .filter(([cle, source]) => (source === 'projet' || source === 'local') && !['actif', 'seuilDemande', 'seuilRelance', 'plancher'].includes(cle))
-    .map(([cle, source]) => `${cle} (${source})`)
-  if (surcharges.length > 0) lignes.push(`Textes surchargés : ${surcharges.join(', ')}.`)
+  const overridden = (Object.entries(sources) as [keyof Settings, Source][])
+    .filter(([key, source]) => (source === 'project' || source === 'local') && !NUMERIC.includes(key))
+    .map(([key, source]) => `${key} (${source})`)
+  if (overridden.length > 0) lines.push(`Overridden texts: ${overridden.join(', ')}.`)
 
-  const ventilation = usage.context.breakdown
-  if (ventilation !== undefined) {
-    const auto = ventilation.isAutoCompactEnabled
-      ? `compactage automatique vers ${nombre(ventilation.autoCompactThreshold ?? ventilation.maxTokens)} tokens`
-      : 'compactage automatique désactivé'
-    lignes.push(`Ventilation estimée (${auto}) :`)
-    for (const c of ventilation.categories.filter(c => !c.isDeferred && c.tokens > 0)) {
-      lignes.push(`- ${c.name} : ${nombre(c.tokens)}`)
+  const breakdown = usage.context.breakdown
+  if (breakdown !== undefined) {
+    const auto = breakdown.isAutoCompactEnabled
+      ? `auto-compact around ${count(breakdown.autoCompactThreshold ?? breakdown.maxTokens)} tokens`
+      : 'auto-compact disabled'
+    lines.push(`Estimated breakdown (${auto}):`)
+    for (const c of breakdown.categories.filter(c => !c.isDeferred && c.tokens > 0)) {
+      lines.push(`- ${c.name}: ${count(c.tokens)}`)
     }
   }
-  return lignes.join('\n')
+  return lines.join('\n')
 }
 
-function nombre(n: number): string {
-  return n.toLocaleString('fr-FR')
+function count(n: number): string {
+  return n.toLocaleString('en-US')
 }
 
-const AIDE_REGLAGES = `Réglages globaux : /config, lignes « ${NOM} » (seuils, plancher, messages, complément, instructions).
-Surcharge par projet : dans .claude/settings.json (partagé) ou .claude/settings.local.json (personnel) du dépôt, par exemple :
-{ "pluginConfigs": { "${NOM}": { "options": { "seuilDemande": 50, "complement": "Mets aussi à jour docs/…" } } } }
-Variables des messages : {pourcentage}, {seuil}, {plancher}, {outil}. Un message de relance vide reprend celui de la demande.`
+const SETTINGS_HELP = `Global settings: /config, rows "${NAME}" (thresholds, floor, messages, suffix, instructions).
+Per-project override: in the repository's .claude/settings.json (shared) or .claude/settings.local.json (personal), for example:
+{ "pluginConfigs": { "${NAME}": { "options": { "requestThreshold": 50, "messageSuffix": "Also update docs/…" } } } }
+Message variables: {percent}, {threshold}, {floor}, {tool}. An empty reminder message reuses the compact request message.`

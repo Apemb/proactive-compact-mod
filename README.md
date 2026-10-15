@@ -1,98 +1,97 @@
 # proactive-compact-mod
 
-Mod Claude Code qui laisse l'agent **préparer et choisir son compactage**, au lieu de le subir quand le contexte est
-plein.
+A Claude Code mod that lets the agent **prepare and choose its own compaction**, instead of having auto-compact land
+on it when the context is full.
 
-Sans lui, une longue session finit compactée automatiquement, au milieu d'un travail, sans que l'agent ait mis ses
-mémoires à jour : ce qui n'était pas consigné se perd dans le résumé. Le mod prévient l'agent assez tôt, lui donne de
-quoi mesurer son contexte, et lui permet de lancer lui-même le compactage au moment qu'il juge bon.
+Without it, a long session ends up auto-compacted in the middle of the work, before the agent has saved its memories:
+whatever was not written down is lost in the summary. The mod warns the agent early enough, gives it a way to measure
+its context, and lets it trigger the compaction itself when it judges the moment right.
 
-## Ce qu'il fait
+## What it does
 
-| Élément | Rôle |
+| Piece | Role |
 |---|---|
-| **Demande** de compactage | À la fin d'un tour de la session principale, si le contexte brut atteint `seuilDemande` (60 % par défaut), le mod envoie un message qui demande à l'agent de mettre ses mémoires à jour puis d'appeler `compacter_session`. Une fois par cycle. |
-| **Relance** | Même chose à `seuilRelance` (80 % par défaut), si l'agent n'a pas compacté. Un saut direct au-delà de ce seuil n'envoie que la relance. |
-| Outil `contexte_session` | Rend à l'agent les tokens utilisés, la fenêtre, le pourcentage, les seuils et l'état des messages. Avec `detail: true`, la ventilation par catégorie et le seuil du compactage automatique. |
-| Outil `compacter_session` | **Programme** le compactage, exécuté à la fin du tour en cours : Claude Code refuse de compacter pendant un tour. Il accepte des `instructions`, ce que le résumé doit garder. Refusé sous `plancher` (40 % par défaut), annulé si le tour est interrompu. |
-| `/compactage` | `statut` (défaut), `on`, `off`, `reglages`. |
+| **Compact request** | At the end of a main-session turn, if the raw context fill reaches `requestThreshold` (60% by default), the mod sends a message asking the agent to update its memories, then call `compact_session`. Once per cycle. |
+| **Reminder** | The same at `reminderThreshold` (80% by default), if the agent has not compacted. Jumping straight past this threshold sends the reminder only. |
+| `context_usage` tool | Gives the agent the tokens used, the window, the percentage, the thresholds and which message was last sent. With `detail: true`, the breakdown by category and the auto-compact threshold. |
+| `compact_session` tool | **Schedules** the compaction, run when the current turn ends: Claude Code refuses to compact during a turn. It takes `instructions`, what the summary must keep. Refused below `compactFloor` (40% by default), cancelled if the turn is interrupted. |
+| `/proactive-compact` | `status` (default), `on`, `off`, `settings`. |
 
-Tout compactage réussi, celui de l'agent, un `/compact` ou l'automatique, réarme la demande et la relance. Les tours
-des sous-agents sont ignorés, et les deux outils leur sont refusés : ils ne lisent que la session principale.
+Any successful compaction, the agent's, a `/compact` or auto-compact, rearms the compact request and the reminder.
+Subagent turns are ignored, and both tools refuse subagents: they only read the main session.
 
-Les outils apparaissent pour l'agent sous `mcp__proactive-compact-mod__contexte_session` et
-`mcp__proactive-compact-mod__compacter_session`.
+The agent sees the tools as `mcp__proactive-compact-mod__context_usage` and `mcp__proactive-compact-mod__compact_session`.
 
-## Réglages
+## Settings
 
-Les réglages globaux se changent dans `/config`, aux lignes `proactive-compact-mod` :
+Global settings live in `/config`, in the `proactive-compact-mod` rows:
 
-| Réglage | Défaut | Rôle |
+| Setting | Default | Role |
 |---|---|---|
-| `actif` | `true` | Envoie la demande et la relance. Les outils restent offerts dans tous les cas. |
-| `seuilDemande` | `60` | Pourcentage brut du contexte qui déclenche la demande. |
-| `seuilRelance` | `80` | Pourcentage brut qui déclenche la relance. |
-| `plancher` | `40` | En dessous, `compacter_session` refuse. |
-| `messageDemande` | texte fourni | Message de la demande. |
-| `messageRelance` | vide | Message de la relance ; vide, celui de la demande sert. |
-| `complement` | vide | Ajouté à la fin des deux messages. |
-| `instructionsCompactage` | vide | Passées au résumé, avant celles de l'agent. |
+| `enabled` | `true` | Sends the compact request and the reminder. The tools are offered either way. |
+| `requestThreshold` | `60` | Raw context percentage that triggers the compact request. |
+| `reminderThreshold` | `80` | Raw percentage that triggers the reminder. |
+| `compactFloor` | `40` | Below it, `compact_session` refuses. |
+| `requestMessage` | provided text | The compact request message. |
+| `reminderMessage` | empty | The reminder message; when empty, the compact request message is reused. |
+| `messageSuffix` | empty | Appended to both messages. |
+| `compactInstructions` | empty | Passed to the summary, before the agent's own. |
 
-Les messages acceptent les variables `{pourcentage}`, `{seuil}`, `{plancher}` et `{outil}`.
+Messages accept the variables `{percent}`, `{threshold}`, `{floor}` and `{tool}`.
 
-**Surcharge par projet.** Dans le `.claude/settings.json` du dépôt (partagé) ou son `.claude/settings.local.json`
-(personnel), qui l'emporte :
+**Per-project override.** In the repository's `.claude/settings.json` (shared) or `.claude/settings.local.json`
+(personal), which wins:
 
 ```json
 {
   "pluginConfigs": {
     "proactive-compact-mod": {
       "options": {
-        "seuilDemande": 50,
-        "complement": "Mets aussi à jour docs/processus/releve-taches.md."
+        "requestThreshold": 50,
+        "messageSuffix": "Also update docs/task-log.md."
       }
     }
   }
 }
 ```
 
-Ces surcharges sont relues à chaque usage : une modification prend effet sans recharger le mod. `/compactage` indique
-d'où vient chaque valeur.
+Overrides are read again on every use: a change takes effect without reloading the mod. `/proactive-compact` shows
+where each value comes from.
 
-## Installer
+## Install
 
-Le mod est un plugin à hooks de fonction de Claude Code (API en accès anticipé, écrit sous Claude Code 2.1.301).
+The mod is a Claude Code function-hooks plugin (early-access API, written against Claude Code 2.1.301).
 
-- **Pour toutes les sessions** : ajouter le dossier du dépôt à `CLAUDE_CODE_PLUGIN_DIRS`, dans le bloc `env` de
-  `~/.claude/settings.json` :
+- **For every session**: add the repository folder to `CLAUDE_CODE_PLUGIN_DIRS`, in the `env` block of
+  `~/.claude/settings.json`:
   ```json
   { "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/proactive-compact-mod" } }
   ```
-- **Pour une session** : `claude --plugin-dir /path/to/proactive-compact-mod`.
+- **For one session**: `claude --plugin-dir /path/to/proactive-compact-mod`.
 
-En session interactive, le dossier est surveillé : une modification recharge le mod.
+In an interactive session the folder is watched: saving a file reloads the mod.
 
-## Développer
+## Develop
 
 ```sh
-claude plugin validate .   # ce que le module accroche et appelle, et ce que le moteur refuserait
-claude plugin test .       # tests/*.test.ts contre le moteur
-tsc -p .                   # une fois le mod chargé, quand Claude Code a posé .claude-plugin/types/
+claude plugin validate .   # what the module hooks and calls, and what the engine would refuse
+claude plugin test .       # tests/*.test.ts against the engine
+tsc -p .                   # once the mod has loaded and Claude Code has written .claude-plugin/types/
 ```
 
-| Fichier | Contenu |
+| File | Content |
 |---|---|
-| `.claude-plugin/plugin.json` | Manifeste et réglages (`userConfig`). |
-| `hooks/register.ts` | Hooks : fin de tour, compactage, outils, commande. |
-| `hooks/reglages.ts` | Fusion des réglages (défauts, global, projet, local) et gabarit des messages. |
-| `types/index.d.ts` | Contrat de l'état de session (`$.state`). |
-| `tests/` | Tests de comportement. |
+| `.claude-plugin/plugin.json` | Manifest and settings (`userConfig`). |
+| `hooks/register.ts` | Hooks: turn end, compaction, tools, command. |
+| `hooks/settings.ts` | Settings resolution (default, user, project, local) and message templating. |
+| `types/index.d.ts` | Session state contract (`$.state`). |
+| `tests/` | Behaviour tests. |
 
-`.claude-plugin/types/` est écrit par Claude Code à chaque chargement et n'est pas versionné.
+`.claude-plugin/types/` is written by Claude Code on every load and is not versioned.
 
-## Limites connues
+## Known limits
 
-- Les sous-agents n'ont ni les messages ni les outils : la mesure de leur propre contexte reste à faire.
-- Un `plancher` supérieur à `seuilDemande` rend la demande inutile, car l'outil refuserait de compacter. Le mod ne le
-  signale pas encore.
-- Le `⚠` qui précède l'état dans la barre d'état est posé par Claude Code ; l'API ne permet pas de le changer.
+- Subagents get neither the messages nor the tools: measuring their own context is still to be done.
+- A `compactFloor` above `requestThreshold` makes the compact request pointless, since the tool would refuse. The mod
+  does not flag it yet.
+- The `⚠` before the status in the status bar is drawn by Claude Code; the API offers no way to change it.

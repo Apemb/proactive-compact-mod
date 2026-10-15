@@ -2,46 +2,46 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-const COMPACTER = 'mcp__proactive-compact-mod__compacter_session'
-const CONTEXTE = 'mcp__proactive-compact-mod__contexte_session'
+const COMPACT = 'mcp__proactive-compact-mod__compact_session'
+const CONTEXT = 'mcp__proactive-compact-mod__context_usage'
 
-type Monde = {
-  pourcentage: number
-  envoyes: string[]
-  compactages: (string | undefined)[]
-  projet: Record<string, unknown>
+type World = {
+  percent: number
+  sent: string[]
+  compactions: (string | undefined)[]
+  project: Record<string, unknown>
 }
 
-function monde(on: On, depart: Partial<Monde> = {}): Monde {
-  const m: Monde = { pourcentage: 0, envoyes: [], compactages: [], projet: {}, ...depart }
+function world(on: On, start: Partial<World> = {}): World {
+  const w: World = { percent: 0, sent: [], compactions: [], project: {}, ...start }
   on('session.usage', () => ({
     value: {
       startedAt: 0,
-      context: { tokens: m.pourcentage * 10_000, window: 1_000_000, percent: m.pourcentage },
+      context: { tokens: w.percent * 10_000, window: 1_000_000, percent: w.percent },
       rateLimits: [],
     },
   }))
   on('settings.read', (_$, e) => ({
     value: (e.source === 'project'
-      ? { pluginConfigs: { 'proactive-compact-mod': { options: m.projet } } }
+      ? { pluginConfigs: { 'proactive-compact-mod': { options: w.project } } }
       : {}) as never,
   }))
   on('prompt.submit', (_$, e) => {
-    m.envoyes.push(e.text)
+    w.sent.push(e.text)
     return { text: e.text }
   })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('ui.status', () => ({ value: undefined }))
   on('session.compact', (_$, e) => {
-    m.compactages.push(e.instructions)
-    return { messages: [{ role: 'user' as const, text: 'résumé', toolUses: [] }] }
+    w.compactions.push(e.instructions)
+    return { messages: [{ role: 'user' as const, text: 'summary', toolUses: [] }] }
   })
-  return m
+  return w
 }
 
-async function finDeTour($: Engine, agentId?: string): Promise<void> {
+async function endTurn($: Engine, agentId?: string): Promise<void> {
   await $.turn.complete({
-    answer: 'fait',
+    answer: 'done',
     durationMs: 1,
     isAborted: false,
     turnId: `t${Math.random()}`,
@@ -50,104 +50,104 @@ async function finDeTour($: Engine, agentId?: string): Promise<void> {
   })
 }
 
-describe('demande et relance', () => {
-  test('sous le seuil, aucun message', async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 59 })
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes).toEqual([])
+describe('compact request and reminder', () => {
+  test('below the threshold, no message', async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 59 })
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent).toEqual([])
   })
 
-  test('une demande à 60 %, puis une seule relance à 80 %', async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 62 })
-    await finDeTour($)
-    await horloge.advance(10)
-    m.pourcentage = 70
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes.length).toBe(1)
-    expect(m.envoyes[0]).toContain('62 %')
-    expect(m.envoyes[0]).toContain(COMPACTER)
+  test('one compact request at 60%, then a single reminder at 80%', async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 62 })
+    await endTurn($)
+    await clock.advance(10)
+    w.percent = 70
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent.length).toBe(1)
+    expect(w.sent[0]).toContain('62%')
+    expect(w.sent[0]).toContain(COMPACT)
 
-    m.pourcentage = 81
-    await finDeTour($)
-    await horloge.advance(10)
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes.length).toBe(2)
-    expect(m.envoyes[1]).toContain('seuil 80 %')
+    w.percent = 81
+    await endTurn($)
+    await clock.advance(10)
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent.length).toBe(2)
+    expect(w.sent[1]).toContain('threshold 80%')
   })
 
-  test('la relance prend son propre texte quand elle en a un', { options: { messageRelance: 'Dernier appel à {pourcentage} %.' } }, async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 85 })
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes).toEqual(['Dernier appel à 85 %.'])
+  test('the reminder uses its own text when it has one', { options: { reminderMessage: 'Last call at {percent}%.' } }, async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 85 })
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent).toEqual(['Last call at 85%.'])
   })
 
-  test('les tours des sous-agents sont ignorés', async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 90 })
-    await finDeTour($, 'agent-1')
-    await horloge.advance(10)
-    expect(m.envoyes).toEqual([])
+  test('subagent turns are ignored', async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 90 })
+    await endTurn($, 'agent-1')
+    await clock.advance(10)
+    expect(w.sent).toEqual([])
   })
 
-  test('désactivé, aucun message', { options: { actif: false } }, async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 90 })
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes).toEqual([])
+  test('disabled, no message', { options: { enabled: false } }, async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 90 })
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent).toEqual([])
   })
 
-  test('le projet surcharge le seuil et ajoute son complément', async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 52, projet: { seuilDemande: 50, complement: 'Pense au relevé.' } })
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes.length).toBe(1)
-    expect(m.envoyes[0]).toContain('seuil 50 %')
-    expect(m.envoyes[0]!.endsWith('\n\nPense au relevé.')).toBe(true)
+  test('the project overrides the threshold and appends its suffix', async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 52, project: { requestThreshold: 50, messageSuffix: 'Mind the task log.' } })
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent.length).toBe(1)
+    expect(w.sent[0]).toContain('threshold 50%')
+    expect(w.sent[0]!.endsWith('\n\nMind the task log.')).toBe(true)
   })
 })
 
-describe('outils', () => {
-  test('compacter_session refuse sous le plancher', async ($, on) => {
+describe('tools', () => {
+  test('compact_session refuses below the floor', async ($, on) => {
     mock.clock(on)
-    const m = monde(on, { pourcentage: 30 })
-    const r = await $.tool.call({ tool: COMPACTER, instructions: 'x' })
-    expect(r.deny).toContain('sous le plancher de 40 %')
-    expect(m.compactages).toEqual([])
+    const w = world(on, { percent: 30 })
+    const r = await $.tool.call({ tool: COMPACT, instructions: 'x' })
+    expect(r.deny).toContain('below the 40% floor')
+    expect(w.compactions).toEqual([])
   })
 
-  test('compacter_session compacte à la fin du tour et réarme la demande', { options: { instructionsCompactage: 'Garde les décisions.' } }, async ($, on) => {
-    const horloge = mock.clock(on)
-    const m = monde(on, { pourcentage: 65 })
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes.length).toBe(1)
+  test('compact_session compacts when the turn ends and rearms the compact request', { options: { compactInstructions: 'Keep the decisions.' } }, async ($, on) => {
+    const clock = mock.clock(on)
+    const w = world(on, { percent: 65 })
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent.length).toBe(1)
 
-    const r = await $.tool.call({ tool: COMPACTER, instructions: 'Garde la PR #630.' })
+    const r = await $.tool.call({ tool: COMPACT, instructions: 'Keep PR #630.' })
     expect(r.deny).toBeUndefined()
-    expect(m.compactages).toEqual([])
-    await finDeTour($)
-    await horloge.advance(500)
-    expect(m.compactages).toEqual(['Garde les décisions.\n\nGarde la PR #630.'])
+    expect(w.compactions).toEqual([])
+    await endTurn($)
+    await clock.advance(500)
+    expect(w.compactions).toEqual(['Keep the decisions.\n\nKeep PR #630.'])
 
-    await finDeTour($)
-    await horloge.advance(10)
-    expect(m.envoyes.length).toBe(2)
+    await endTurn($)
+    await clock.advance(10)
+    expect(w.sent.length).toBe(2)
   })
 
-  test('contexte_session décrit le remplissage et les seuils', async ($, on) => {
+  test('context_usage reports the fill and the thresholds', async ($, on) => {
     mock.clock(on)
-    monde(on, { pourcentage: 31 })
-    const r = await $.tool.call({ tool: CONTEXTE })
-    expect(String(r.result)).toContain('(31 %)')
-    expect(String(r.result)).toContain('demande à 60 %, relance à 80 %, plancher 40 %')
+    world(on, { percent: 31 })
+    const r = await $.tool.call({ tool: CONTEXT })
+    expect(String(r.result)).toContain('(31%)')
+    expect(String(r.result)).toContain('compact request at 60%, reminder at 80%, floor 40%')
   })
 })

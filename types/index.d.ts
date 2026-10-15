@@ -1,12 +1,12 @@
-/** Un compactage demandé par l'agent, exécuté à la fin de son tour. */
-export type CompactageEnAttente = { instructions: string | null }
+/** A compaction the agent asked for, run when its turn ends. */
+export type PendingCompact = { instructions: string | null }
 
 declare module 'claude-code' {
   interface PluginState {
     'proactive-compact-mod': {
-      /** Dernier message envoyé depuis le dernier compactage : 0 aucun, 1 demande, 2 relance. */
-      niveau: number
-      enAttente: CompactageEnAttente | null
+      /** Last message sent since the last compaction: 0 none, 1 compact request, 2 reminder. */
+      level: number
+      pending: PendingCompact | null
     }
   }
 }
