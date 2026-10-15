@@ -1,0 +1,56 @@
+{
+  "name": "proactive-compact-mod",
+  "version": "0.1.0",
+  "description": "Demande à l'agent de mettre ses mémoires à jour avant un compactage, et lui donne de quoi lire son contexte et compacter lui-même.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "actif": {
+      "type": "boolean",
+      "title": "Demandes de compactage actives",
+      "description": "Envoie la demande et la relance aux seuils. Les outils restent offerts à l'agent.",
+      "default": true
+    },
+    "seuilDemande": {
+      "type": "number",
+      "title": "Seuil de demande (%)",
+      "description": "Remplissage brut du contexte qui déclenche la demande de compactage.",
+      "default": 60
+    },
+    "seuilRelance": {
+      "type": "number",
+      "title": "Seuil de relance (%)",
+      "description": "Remplissage brut du contexte qui déclenche la relance.",
+      "default": 80
+    },
+    "plancher": {
+      "type": "number",
+      "title": "Plancher de compactage (%)",
+      "description": "En dessous, l'outil compacter_session refuse de compacter.",
+      "default": 40
+    },
+    "messageDemande": {
+      "type": "string",
+      "title": "Message de demande",
+      "description": "Variables : {pourcentage}, {seuil}, {plancher}, {outil}.",
+      "default": "Le contexte de cette session atteint {pourcentage} % (seuil {seuil} %). Prépare un compactage : vérifie que tes mémoires, et les documents de suivi s'il y en a, portent tout ce qui n'est pas encore consigné, en particulier les décisions, l'état du travail et les engagements pris. Une fois à jour, et si le moment s'y prête, appelle l'outil {outil} en lui passant dans `instructions` ce que le résumé doit garder. Si le moment est mal choisi, par exemple au milieu d'une mission ou en attente d'un sous-agent, dis-le en une phrase et appelle l'outil plus tard."
+    },
+    "messageRelance": {
+      "type": "string",
+      "title": "Message de relance",
+      "description": "Vide : le message de demande sert aussi à la relance.",
+      "default": ""
+    },
+    "complement": {
+      "type": "string",
+      "title": "Complément aux messages",
+      "description": "Ajouté à la fin de la demande et de la relance ; pensé pour une surcharge par projet.",
+      "default": ""
+    },
+    "instructionsCompactage": {
+      "type": "string",
+      "title": "Instructions de compactage",
+      "description": "Passées au résumé avant celles de l'agent.",
+      "default": ""
+    }
+  }
+}
