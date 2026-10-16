@@ -1,0 +1,8 @@
+{
+  "name": "proactive-compact-mod",
+  "owner": { "name": "Antoine Boileau" },
+  "metadata": {
+    "description": "A Claude Code mod that lets the agent prepare and choose its own compaction."
+  },
+  "plugins": [{ "name": "proactive-compact-mod", "source": "./" }]
+}

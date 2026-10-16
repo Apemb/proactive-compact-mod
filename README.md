@@ -60,18 +60,50 @@ where each value comes from.
 
 ## Install
 
-The mod is a Claude Code function-hooks plugin (early-access API, written against Claude Code 2.1.301).
+> **Early-access API.** The mod is a Claude Code function-hooks plugin, an API that is still in early access and
+> changes between releases. It was written and tested against **Claude Code 2.1.301**; an update of Claude Code may
+> break it until the mod is updated in turn.
 
-- **For every session**: add the repository folder to `CLAUDE_CODE_PLUGIN_DIRS`, in the `env` block of
-  `~/.claude/settings.json`:
+At the prompt of a terminal session:
+
+```
+/plugin install proactive-compact-mod --marketplace Apemb/proactive-compact-mod
+```
+
+Answer `y` to add the marketplace, then choose a scope (user scope: every session). From a shell:
+
+```sh
+claude plugin install proactive-compact-mod --marketplace Apemb/proactive-compact-mod
+```
+
+In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with
+`Apemb/proactive-compact-mod`, then Add plugin.
+
+Check that it runs with `/proactive-compact status`.
+
+### Organization-managed Claude Code
+
+Where an organization manages Claude Code through managed settings:
+
+- hooks on `session.compact` do not run in a plugin a person installs, only in one the organization lists. The mod
+  still works: its own `compact_session` rearms the cycle directly, and after a `/compact` or an auto-compact the
+  cycle is rearmed at the next turn end, once the context is back under `requestThreshold`;
+- under `allowManagedHooksOnly`, a plugin a person installs loads no hooks at all, and the mod does nothing;
+- a marketplace or plugin allowlist may refuse the install.
+
+If `/proactive-compact status` does not answer, ask your administrator to list the mod in the managed settings.
+
+## Develop
+
+Run the mod from a working copy:
+
+- **for one session**: `claude --plugin-dir /path/to/proactive-compact-mod`;
+- **for every session**: add the folder to `CLAUDE_CODE_PLUGIN_DIRS`, in the `env` block of `~/.claude/settings.json`:
   ```json
   { "env": { "CLAUDE_CODE_PLUGIN_DIRS": "/path/to/proactive-compact-mod" } }
   ```
-- **For one session**: `claude --plugin-dir /path/to/proactive-compact-mod`.
 
 In an interactive session the folder is watched: saving a file reloads the mod.
-
-## Develop
 
 ```sh
 claude plugin validate .   # what the module hooks and calls, and what the engine would refuse
@@ -82,6 +114,7 @@ tsc -p .                   # once the mod has loaded and Claude Code has written
 | File | Content |
 |---|---|
 | `.claude-plugin/plugin.json` | Manifest and settings (`userConfig`). |
+| `.claude-plugin/marketplace.json` | Makes the repository a marketplace, for `/plugin install`. |
 | `hooks/register.ts` | Hooks: turn end, compaction, tools, command. |
 | `hooks/settings.ts` | Settings resolution (default, user, project, local) and message templating. |
 | `types/index.d.ts` | Session state contract (`$.state`). |
@@ -96,7 +129,7 @@ tsc -p .                   # once the mod has loaded and Claude Code has written
   does not flag it yet.
 - The `⚠` before the status in the status bar is drawn by Claude Code; the API offers no way to change it.
 
-## Status
+## Qualification
 
 Qualified in a real interactive session on 2026-10-15 (Claude Code 2.1.301), with test thresholds of 20% (compact
 request), 30% (reminder) and 15% (floor):
@@ -106,16 +139,16 @@ request), 30% (reminder) and 15% (floor):
 - right after, `context_usage` reported 7% (about 65k tokens), `Last message sent: none` and
   `Compaction scheduled: no`: the cycle was rearmed.
 
-The mod is now installed for every session through `CLAUDE_CODE_PLUGIN_DIRS`, with the default settings.
-
-Not published yet: the repository has no remote.
-
-## Next steps
+## Roadmap
 
 1. **Warn when `compactFloor` is above `requestThreshold`**, in `/proactive-compact status` and in `context_usage`:
    the compact request is then pointless, since `compact_session` would refuse.
-2. **Subagents (v2)**: let a subagent measure its own context and get the compact request and the reminder, so that a
+2. **Subagents**: let a subagent measure its own context and get the compact request and the reminder, so that a
    long-running agent can keep within a context budget (for instance 450k tokens targeted, 600k at most).
 3. **Open question**: during the trial, the compact request once arrived at 29% instead of 20%, after several hot
    reloads of the mod. Suspected cause, not established: a reload at the end of a turn misses that turn's
    `turn.complete`. Worth reproducing before relying on hot reload.
+
+## License
+
+[MIT](LICENSE)

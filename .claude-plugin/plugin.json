@@ -2,6 +2,12 @@
   "name": "proactive-compact-mod",
   "version": "0.2.0",
   "description": "Lets the agent prepare and choose its own compaction instead of suffering auto-compact: asks it to save its memories at a context threshold, and gives it tools to read its context and compact itself.",
+  "author": {
+    "name": "Antoine Boileau",
+    "url": "https://github.com/Apemb"
+  },
+  "repository": "https://github.com/Apemb/proactive-compact-mod",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
     "enabled": {
